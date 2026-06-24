@@ -187,7 +187,33 @@ export async function POST(request: Request) {
     console.error('Error processing webhook:', error)
   })
 
+  // WEBHOOK_PASSTHROUGH mirrors valid inbound webhook payloads to an
+  // optional downstream webhook without changing Meta's acknowledgement
+  // path. This is intentionally best-effort: passthrough failures are
+  // logged, but they must never make the primary webhook return an error.
+  passThroughWebhook(rawBody, signature).catch((error) => {
+    console.error('[webhook] passthrough failed:', error)
+  })
+
   return NextResponse.json({ status: 'received' }, { status: 200 })
+}
+
+async function passThroughWebhook(rawBody: string, signature: string | null) {
+  const passthroughUrl = process.env.WEBHOOK_PASSTHROUGH
+  if (!passthroughUrl) return
+
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+  if (signature) headers['x-hub-signature-256'] = signature
+
+  const response = await fetch(passthroughUrl, {
+    method: 'POST',
+    headers,
+    body: rawBody,
+  })
+
+  if (!response.ok) {
+    throw new Error(`passthrough webhook returned ${response.status}`)
+  }
 }
 
 async function processWebhook(body: { entry?: WhatsAppWebhookEntry[] }) {
